@@ -1,39 +1,279 @@
-# History files
-.Rhistory
-.Rapp.history
+title: "HUDM 5127 - Final Project"
+author: "Elena Liu"
+date: "4/26/2022"
+output: html_document
+---
+## Survival Analysis
+### Introduction
+Survival analysis is to analyze a time to outcome variable (time until one event occurs), which reflects time until a participant has an event of interest, which is death in our case. Survival analysis has a variety of use such as in cancer studies, sociology fields for event-history analysis (example as Austin black cat), and in engineering field for “failure-time analysis”.The main purpose of survival analysis is to see what magnitude of impact of certain clinical characteristics on patient’s survival and are there any differences in survival between groups of patients. In survival analysis, we assume that censoring is independent or unrelated to the likelihood of developing the event of interest.Survival analysis is very sensitive on the estimation methods, using inappropriate methods without the reviews of  bio-statisticians can give rise to erroneous conclusions. We would like to do the survival analysis in the approach of Bayesian method, and it is more flexible in regrading to adjusting mortality with other variables. The traditional approach of Kaplan-Meier (KM) method (the function I use to make the plot) raises a limitation on the log-rank test which is  a significance test and cannot provide an estimate of the size of the difference between the groups and corresponding confidence interval. Another limitation of the KM method is that it only provides unadjusted mortality (and survival) probabilities.
 
-# Session Data files
-.RData
+### Data description
+The dataset 'prothros' is a randomized trial on 488 liver cirrhosis patients with following variables:
 
-# User-specific files
-.Ruserdata
+id:	subject identifier
 
-# Example code in package build process
-*-Ex.R
+N:	number of measurements of prothrobin marker with mean of 7.08
 
-# Output files from R CMD build
-/*.tar.gz
+treat:	treatment group (1: prednisone, 0: placebo)
 
-# Output files from R CMD check
-/*.Rcheck/
+time:	time to death or censoring
 
-# RStudio files
-.Rproj.user/
+death:	dummy for death (versus censoring)
 
-# produced vignettes
-vignettes/*.html
-vignettes/*.pdf
+### Research Question: 
+#### Is there any difference between mortality rate of the patients with and without treatment using different priors of numbers of prothrobin marker.
 
-# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
-.httr-oauth
+```{r, datacleaning}
+d <- read.table(url("http://www.gllamm.org/books/prothros.dat"))
+d = as.data.frame(d)
+d = d[-1,]
+colnames(d) = c('id', 'N', 'treat', 'time', 'death')
+mean(as.numeric(d$N))#7.08
+library(rethinking) 
+d$death <- ifelse( d$death=="1" , 1L , 0L ) 
+d$treatment_dum = ifelse(d$treat!="1" , 1L , 2L)
+dat <- list(
+  time_to_death = as.numeric( d$time ), 
+  treatment_dum = d$treatment_dum, 
+  death = d$death )
+```
+### Prior 1
+Here I am using group 1 and 2 with and without treatment to see if there is any differences between the two groups, variable N (number of measurements of prothrobin marker) is not included in Model 1. 
+I used coefficents of trentment dummy variable with density of standard normal distribution.
+The model 1 has 5000 iterations and with 4 chains.
 
-# knitr and R markdown default cache directories
-*_cache/
-/cache/
+## Model 1
+###### m1 <- ulam( 
+######  alist(
+######   time_to_death|death==1 ~ exponential( lambda ), 
+######    time_to_death|death==0 ~ custom(exponential_lccdf( !Y | lambda )), 
+######   lambda <- 1.0/mu,
+######    log(mu) <- a[treatment_dum],
+######    a[treatment_dum] ~ normal(0,1)
+######  ), data=dat , chains=4, iter = 5000) 
+  
+```{r, include=FALSE}
+m1 <- ulam( 
+  alist(
+    time_to_death|death==1 ~ exponential( lambda ), 
+    time_to_death|death==0 ~ custom(exponential_lccdf( !Y | lambda )), 
+    lambda <- 1.0/mu,
+    log(mu) <- a[treatment_dum],
+    a[treatment_dum] ~ normal(0,1)
+  ), data=dat , chains=4, iter = 5000) 
+```
 
-# Temporary files created by R markdown
-*.utf8.md
-*.knit.md
 
-# R Environment Variables
-.Renviron
+
+```{r, model1}
+traceplot(m1,pars = c("a[1]", "a[2]"))
+precis( m1,2 )
+
+post.1 <- extract.samples( m1 )
+post.1$D = exp(post.1$a)
+precis(post.1,depth = 2)
+a1.1 <- as.matrix(post.1$a[,1])
+a2.1 <- as.matrix(post.1$a[,2])
+a1.bar.1 = mean(a1.1)
+a2.bar.1 = mean(a2.1)
+S1.1 <- cov(a1.1)
+S2.1 <- cov(a2.1)
+n1.1 = nrow(a1.1)
+n2.1= nrow(a2.1)
+(Sp <- (1/(n1.1 + n2.1 -2))*((n1.1-1)*S1.1 + (n2.1-1)*S2.1))
+p <- ncol(a1.1)
+qf(0.95, p, n1.1+ n2.1 - p -1)
+(c.sq = (n1.1 + n2.1 - 2)*p/(n1.1+ n2.1 -p - 1)*qf(0.95,p, n1.1 + n2.1 - p -1))
+
+#contrast:
+
+((a1.bar.1 - a2.bar.1) - sqrt(c.sq)*sqrt((1/n1.1 + 1/n2.1)*Sp))
+((a1.bar.1 - a2.bar.1) + sqrt(c.sq)*sqrt((1/n1.1 + 1/n2.1)*Sp))
+
+
+```
+
+
+
+
+### Model 1 result:
+The coefficients of two groups 1 and 2 (a1 and a2) are with mean of 7.71 and 7.61 respectively. There is a difference between the two groups, i.e., with and without treatment in regarding to survival rate (mortality rate). The chains converges well for both coefficients shown in the traceplot
+
+After sampling from the model 1 and building the contrast (of a1 and a2) as well as an confidence interval of 95%, the lower bound of the contrast is 0.099 and the upper bound of the contrast is 0.103, since 0 is not included in the interval, and we can conclude that there is a significant difference between the two coefficients, and the groups with and without treatment in survival rate.
+
+With the death number stimulated from model 1, the mean death number of the group without treatment is 2237 and with is 2022.
+
+
+
+
+
+### Prior 2
+Same with model 1,but variable N (number of measurements of prothrobin marker) is included in Model 1. That means we consider the effects of patients' status of prothrobin marker as a prior in model 2. The density of N is following a exponential of 2 (7.38) with consideration of mean of N being 7.08.
+I used coefficents of treatment dummy variable with density of standard normal distribution.
+The model 2 has 5000 iterations and with 4 chains.
+
+
+## Model 2
+###### m2 <- ulam( 
+######  alist(
+######    time_to_death|death==1 ~ exponential( lambda ), 
+######    time_to_death|death==0 ~ custom(exponential_lccdf( !Y | lambda )), 
+######    lambda <- 1.0/mu,
+######    log(mu) <- a[treatment_dum]-N,
+######    a[treatment_dum] ~ normal(0,1),
+######   N~dexp(1)
+######  ), data=dat , chains=4, iter = 5000)
+
+
+```{r, include=FALSE}
+
+m2 <- ulam( 
+  alist(
+    time_to_death|death==1 ~ exponential( lambda ), 
+    time_to_death|death==0 ~ custom(exponential_lccdf( !Y | lambda )), 
+    lambda <- 1.0/mu,
+    log(mu) <- a[treatment_dum]-N,
+    a[treatment_dum] ~ normal(0,1),
+    N~dexp(2)
+  ), data=dat , chains=4, iter = 5000)
+```
+
+```{r, model2}
+precis( m2,2 )
+
+traceplot(m2,pars = c("a[1]", "a[2]"))
+post.2 <- extract.samples( m2 )
+post.2$D = exp(post.2$a)
+precis(post.2, depth = 2)
+
+a1.2 <- as.matrix(post.2$a[,1])
+a2.2 <- as.matrix(post.2$a[,2])
+a1.bar.2 = mean(a1.2)
+a2.bar.2 = mean(a2.2)
+S1.2 <- cov(a1.2)
+S2.2 <- cov(a2.2)
+n1.2 = nrow(a1.2)
+n2.2= nrow(a2.2)
+(Sp.2 <- (1/(n1.2 + n2.2 -2))*((n1.2-1)*S1.1 + (n2.2-1)*S2.2))
+p.2 <- ncol(a1.2)
+qf(0.95, p.2, n1.2+ n2.2 - p.2 -1)
+(c.sq.2 = (n1.2 + n2.2 - 2)*p.2/(n1.2+ n2.2 -p.2 - 1)*qf(0.95,p.2, n1.2 + n2.2 - p.2 -1))
+#contrast:
+((a1.bar.2 - a2.bar.2) - sqrt(c.sq.2)*sqrt((1/n1.2 + 1/n2.2)*Sp.2))
+((a1.bar.2 - a2.bar.2) + sqrt(c.sq.2)*sqrt((1/n1.2 + 1/n2.2)*Sp.2))
+```
+
+### Model 2 result:
+The coefficients of two groups 1 and 2 (a1 and a2) are with mean of 7.76 and 7.67 respectively. There is a difference between the two groups, i.e., with and without treatment in regarding to survival rate (mortality rate) after including the prior status of the patients. N is with mean of 0.06. The chains converges well for both coefficients and N shown in the traceplot
+
+After sampling from the model 2 and building the contrast (of a1 and a2) as well as an confidence interval of 95%, the lower bound of the contrast is 0.096 and the upper bound of the contrast is 0.100, since 0 is not included in the interval, and we can conclude that there is a significant difference between the two coefficients, and the groups with and without treatment in survival rate.
+
+With the death number stimulated from model 1, the mean death number of the group without treatment is 2362 and with is 2141 after included the prior status of N.
+
+
+
+
+
+### Prior 3
+Same with model 1, the density of N is not included in model 3, but the distribution of  coefficient a is more spread than model 1, which follows N(1,10), which highlights the significance of treatment.
+I used coefficients of treatment dummy variable with density of standard normal distribution.
+The model 3 has 5000 iterations and with 4 chains.
+
+## Model 3
+###### m3 <- ulam( 
+######  alist(
+######  time_to_death|death==1 ~ exponential( lambda ), 
+######   time_to_death|death==0 ~ custom(exponential_lccdf( !Y | lambda )), 
+######   lambda <- 1.0/mu,
+######   log(mu) <- a[treatment_dum],
+######   a[treatment_dum] ~ normal(0,10)
+######    ), data=dat , chains=4,iter = 5000) 
+    
+```{r, include=  FALSE}
+m3 <- ulam( 
+  alist(
+    time_to_death|death==1 ~ exponential( lambda ), 
+    time_to_death|death==0 ~ custom(exponential_lccdf( !Y | lambda )), 
+    lambda <- 1.0/mu,
+    log(mu) <- a[treatment_dum],
+    a[treatment_dum] ~ normal(0,10)
+    ), data=dat , chains=4,iter = 5000) 
+```
+
+```{r, model3}
+precis( m3,2 )
+
+traceplot(m3,pars = c("a[1]", "a[2]"))
+
+post.3 <- extract.samples( m3 )
+post.3$D = exp(post.2$a)
+precis(post.3,depth = 2)
+a1.3 <- as.matrix(post.3$a[,1])
+a2.3 <- as.matrix(post.3$a[,2])
+a1.bar.3 = mean(a1.3)
+a2.bar.3 = mean(a2.3)
+S1.3 <- cov(a1.3)
+S2.3 <- cov(a2.3)
+n1.3 = nrow(a1.3)
+n2.3= nrow(a2.3)
+(Sp.3 <- (1/(n1.3 + n2.3 -2))*((n1.3-1)*S1.3 + (n2.3-1)*S2.3))
+p.3 <- ncol(a1.3)
+qf(0.95, p.3, n1.3+ n2.3 - p.3 -1)
+(c.sq.3 = (n1.3 + n2.3 - 2)*p.3/(n1.3+ n2.3 -p.3 - 1)*qf(0.95,p.3, n1.3 + n2.3 - p.3 -1))
+#contrast:
+((a1.bar.3 - a2.bar.3) - sqrt(c.sq.3)*sqrt((1/n1.3 + 1/n2.3)*Sp.3))
+((a1.bar.3 - a2.bar.3) + sqrt(c.sq.3)*sqrt((1/n1.3 + 1/n2.3)*Sp.3))
+
+```
+
+### Model 3 result:
+The coefficients of two groups 1 and 2 (a1 and a2) are with mean of 7.76 and 7.66 respectively. There is a difference between the two groups, i.e., with and without treatment in regarding to survival rate (mortality rate) after including the prior status of the patients. The chains converges well for both coefficients and N shown in the traceplot.
+
+After sampling from the model 3 and building the contrast (of a1 and a2) as well as an confidence interval of 95%, the lower bound of the contrast is 0.101 and the upper bound of the contrast is 0.105, since 0 is not included in the interval, and we can conclude that there is a significant difference between the two coefficients, and the groups with and without treatment in survival rate.
+
+With the death number stimulated from model 1, the mean death number of the group without treatment is 2362 and with is 2141 with coefficents follows the normal distribution of (0,10).
+
+
+
+
+### Plot of KM method
+
+
+```{r,plot}
+library("survival")
+library("survminer")
+d$time = as.numeric(d$time)
+fit <- survfit(Surv(time, death) ~ treat, data = d)
+print(fit)
+summary(fit)$table
+df <- data.frame(time = fit$time,
+                  n.risk = fit$n.risk,
+                  n.event = fit$n.event,
+                  n.censor = fit$n.censor,
+                  surv = fit$surv,
+                  upper = fit$upper,
+                  lower = fit$lower
+                  )
+head(df)
+ggsurvplot(fit,
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, 
+          risk.table.col = "strata", 
+          linetype = "strata", 
+          surv.median.line = "hv", 
+          ggtheme = theme_bw(), 
+          palette = c("#E7B800", "#2E9FDF"))
+```
+
+
+#### significant difference in the survival plot
+
+### Conclusion and summary:
+From the output of the three models above, we acknowledged that there is a significant difference between the group with and without treatment in regarding to survival rate as well as the death number stimulated from the models.After comparing the results of the three outputs, the death number decreases approximately 200 from group 1(without treatment) to group 2(with treatment).In conclusion, based on the models and the corresponding data, we conclude that the treatment against liver cirrhosis is effective for the level of survival rate.
+
+
+
+Thank you.
+
+
+
